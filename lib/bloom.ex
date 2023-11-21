@@ -13,29 +13,18 @@ defmodule Bloom do
     GenServer.cast(__MODULE__, {:val, value})
   end
 
-  def hash_md5() do
-    GenServer.cast(__MODULE__, :md5)
-  end
-
-  def hash_sha1() do
-    GenServer.cast(__MODULE__, :sha1)
-  end
-
-  def hash_sha2() do
-    GenServer.cast(__MODULE__, :sha2)
-  end
   def info() do
     GenServer.call(__MODULE__, :info)
   end
 
-  def start(size \\ 24_000) do
+  def start(size \\ 24) do
     GenServer.start_link(__MODULE__, size, name: __MODULE__)
   end
 
   def init(size) do
-    raw_list = Enum.to_list(1..100)
+    raw_list = Enum.to_list(1..size)
     bitmap = Enum.map(raw_list, fn _ -> 0 end)
-    state = %{filter: bitmap, size: size, current: nil, current_md5: nil, current_sha1: nil, current_sha2: nil}
+    state = %{filter: bitmap, size: size, current: nil, check_one: false, check_two: false, check_three: false}
     {:ok, state}
   end
 
@@ -44,22 +33,59 @@ defmodule Bloom do
   end
 
   def handle_cast({:val, value}, state) do
-    {:noreply, %{state | current: value}}
+    change_one = mod(%{state|current: value})
+    change_two = mul(change_one)
+    change_three = binn(change_two)
+    
+    case already_in?(change_three) do
+      true -> Logger.debug("[#{__MODULE__}] has this value already ")
+      _ -> {:noreply, %{state | current: value, filter: change_two.filter}}
+    end
   end
 
-  def handle_cast(:md5, state) do
-    hash = Base.encode16(:crypto.hash(:md5, state.current))
-    {:noreply, %{state | current_md5: hash}}
+  
+  def mod(state) do
+    hash = rem(state.current, length(state.filter))
+    {list, before} = activate_index(hash, state)
+
+    case before == 1 do
+      true -> %{state | filter: list, check_one: true}
+      false -> %{state | filter: list}
+    end
   end
 
-  def handle_cast(:sha1, state) do
-    hash = Base.encode16(:crypto.hash(:sha1, state.current))
-    {:noreply, %{state | current_sha1: hash}}
-  end
-  def handle_cast(:sha2, state) do
-    hash = Base.encode16(:crypto.hash(:sha2, state.current))
-    {:noreply, %{state | current_sha2: hash}}
+
+  def mul(state) do
+    c = :rand.uniform()*1
+    m = trunc(state.current*c)
+    hash = floor(length(state.filter) * (rem(m, 1)))
+    {list, before} = activate_index(hash, state)
+
+    case before == 1 do
+      true -> %{state | filter: list, check_two: true}
+      false -> %{state | filter: list}
+    end
   end
 
+  def binn(state) do
+    hash = div(state.current, length(state.filter))
+    {list, before} = activate_index(hash, state)
+    case before == 1 do
+      true -> %{state | filter: list, check_three: true}
+      false -> %{state | filter: list}
+    end
+  end
+
+  defp activate_index(hash, state) do
+    value = Enum.at(state.filter, hash)
+    {List.update_at(state.filter, hash, &(&1 = 1)), value}
+  end
+
+  defp already_in?(state) do
+    case state.check_one && state.check_two && state.check_three do
+      true -> true
+      _ -> false 
+    end
+  end
 
 end
